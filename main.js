@@ -15,7 +15,13 @@ const gameState = {
     
     lastNoseY: 0,
     movementDirection: 'none',
-    lastStepTime: 0
+    lastStepTime: 0,
+    
+    // NEW: Obstacle Tracking
+    obstacles: [],
+    lastSpawnTime: 0,
+    spawnInterval: 3000, // 3 seconds (Easy mode)
+    gameSpeed: 0.2
 };
 
 const UI_STATUS = document.getElementById('status-text');
@@ -125,8 +131,6 @@ function onResults(results) {
             }
 
             // THE FIX: ACTION MOMENTUM
-            // If the player is actively jumping or crouching, we refresh the step timer.
-            // This ensures they keep running through the action and have an 800ms grace period upon landing.
             if (gameState.isJumping || gameState.isCrouching) {
                 gameState.lastStepTime = currentTime;
             }
@@ -162,7 +166,6 @@ camera.start();
 // 3. 3D GAME ENGINE (Three.js)
 // ==========================================
 const container = document.getElementById('game-container');
-
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87CEEB); 
 scene.fog = new THREE.Fog(0x87CEEB, 10, 50);  
@@ -175,21 +178,49 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(600, 600);
 container.appendChild(renderer.domElement);
 
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-scene.add(ambientLight);
+// Lighting
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
 dirLight.position.set(5, 10, 7);
 scene.add(dirLight);
 
 const gridHelper = new THREE.GridHelper(100, 50, 0x000000, 0x444444);
-gridHelper.position.y = 0;
 scene.add(gridHelper);
 
-const geometry = new THREE.BoxGeometry(1, 2, 1); 
-const material = new THREE.MeshLambertMaterial({ color: 0xff0000 });
-const playerMesh = new THREE.Mesh(geometry, material);
+// Player
+const playerMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 2, 1), 
+    new THREE.MeshLambertMaterial({ color: 0xff0000 })
+);
 playerMesh.position.y = 1; 
 scene.add(playerMesh);
+
+// ------------------------------------------
+// OBSTACLE FACTORY
+// ------------------------------------------
+function spawnObstacle() {
+    const type = Math.random() > 0.5 ? 'HURDLE' : 'BEAM'; // Randomly choose type
+    let geometry, material, yPos;
+
+    if (type === 'HURDLE') {
+        geometry = new THREE.BoxGeometry(1.5, 0.5, 0.5); // Low hurdle
+        material = new THREE.MeshLambertMaterial({ color: 0xffff00 });
+        yPos = 0.25;
+    } else {
+        geometry = new THREE.BoxGeometry(1.5, 0.5, 0.5); // High beam
+        material = new THREE.MeshLambertMaterial({ color: 0xff00ff });
+        yPos = 2.5;
+    }
+
+    const mesh = new THREE.Mesh(geometry, material);
+    
+    // Choose a random lane: -2, 0, or 2
+    const lanes = [-2, 0, 2];
+    mesh.position.set(lanes[Math.floor(Math.random() * 3)], yPos, -40); // Start far away
+    
+    scene.add(mesh);
+    gameState.obstacles.push({ mesh, type });
+}
 
 function animate() {
     requestAnimationFrame(animate);
@@ -209,13 +240,51 @@ function animate() {
         UI_STATUS.style.color = "#ff3333";
     }
 
-    // 2. Execute 3D Movement
+    // 2. Play Loop Updates
     if (gameState.phase === 'PLAYING') {
+        const currentTime = Date.now();
+
         if (gameState.isRunning) {
-            gridHelper.position.z += 0.2; 
+            // Move Environment
+            gridHelper.position.z += gameState.gameSpeed; 
             if (gridHelper.position.z > 2) gridHelper.position.z = 0; 
+
+            // Spawn Obstacles
+            if (currentTime - gameState.lastSpawnTime > gameState.spawnInterval) {
+                spawnObstacle();
+                gameState.lastSpawnTime = currentTime;
+            }
+
+            // Move and Check Obstacles
+            for (let i = gameState.obstacles.length - 1; i >= 0; i--) {
+                const obs = gameState.obstacles[i];
+                obs.mesh.position.z += gameState.gameSpeed;
+
+                // Collision Logic (Simple AABB)
+                const distZ = Math.abs(obs.mesh.position.z - playerMesh.position.z);
+                const distX = Math.abs(obs.mesh.position.x - playerMesh.position.x);
+                
+                if (distZ < 0.8 && distX < 1.0) {
+                    let hit = false;
+                    if (obs.type === 'HURDLE' && !gameState.isJumping) hit = true;
+                    if (obs.type === 'BEAM' && !gameState.isCrouching) hit = true;
+
+                    if (hit) {
+                        console.log("BOOM! Collision!");
+                        playerMesh.material.color.setHex(0xffffff); // Flash white on hit
+                        setTimeout(() => playerMesh.material.color.setHex(0xff0000), 100);
+                    }
+                }
+
+                // Cleanup: Remove obstacles that passed the player
+                if (obs.mesh.position.z > 10) {
+                    scene.remove(obs.mesh);
+                    gameState.obstacles.splice(i, 1);
+                }
+            }
         }
 
+        // Update Player Position
         playerMesh.position.x += (gameState.targetLaneX - playerMesh.position.x) * 0.1;
 
         if (gameState.isJumping) {
@@ -226,7 +295,6 @@ function animate() {
             playerMesh.position.y = 0.4; 
         } else {
             playerMesh.scale.y = 1;
-            // Only bob the mesh if they are running and not jumping/crouching
             const targetY = gameState.isRunning ? 1 + Math.abs(Math.sin(Date.now() / 150)) * 0.5 : 1;
             playerMesh.position.y += (targetY - playerMesh.position.y) * 0.2;
         }
