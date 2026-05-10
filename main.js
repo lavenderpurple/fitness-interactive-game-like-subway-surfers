@@ -46,34 +46,30 @@ function onResults(results) {
         // PHASE 1: CALIBRATION (Finding the Base Position)
         // ----------------------------------------------------
         if (gameState.phase === 'CALIBRATION') {
-            // Define the "Target Box" in the center of the camera
             const boxLeft = 0.4, boxRight = 0.6;
             const boxTop = 0.3, boxBottom = 0.5;
 
-            // Draw Target Box on Camera View
             canvasCtx.strokeStyle = '#FFFF00';
             canvasCtx.lineWidth = 4;
             canvasCtx.strokeRect(boxLeft * canvasElement.width, boxTop * canvasElement.height, 
                                  (boxRight - boxLeft) * canvasElement.width, (boxBottom - boxTop) * canvasElement.height);
             
-            // Check if Nose is inside the box
             if (nose.x > boxLeft && nose.x < boxRight && nose.y > boxTop && nose.y < boxBottom) {
-                gameState.calibrationTime += 30; // Roughly 30ms per frame
+                gameState.calibrationTime += 30; 
                 
-                // Visual feedback: fill box green as time passes
                 const progress = Math.min(gameState.calibrationTime / 3000, 1);
                 canvasCtx.fillStyle = `rgba(0, 255, 0, ${progress * 0.5})`;
                 canvasCtx.fillRect(boxLeft * canvasElement.width, boxTop * canvasElement.height, 
                                  (boxRight - boxLeft) * canvasElement.width, (boxBottom - boxTop) * canvasElement.height);
 
-                if (gameState.calibrationTime >= 3000) { // 3 seconds locked in
+                if (gameState.calibrationTime >= 3000) { 
                     gameState.baseX = nose.x;
                     gameState.baseY = nose.y;
                     gameState.phase = 'PLAYING';
                     console.log(`Calibrated! BaseX: ${gameState.baseX}, BaseY: ${gameState.baseY}`);
                 }
             } else {
-                gameState.calibrationTime = 0; // Reset if they move out of the box
+                gameState.calibrationTime = 0; 
             }
         } 
         // ----------------------------------------------------
@@ -94,8 +90,8 @@ function onResults(results) {
             else gameState.targetLaneX = 0;                                                // Center
 
             // --- 2. JUMP & CROUCH DETECTION (Relative to BaseY) ---
-            const jumpThreshold = 0.12;  // How far UP from base they must move
-            const crouchThreshold = 0.15; // How far DOWN from base they must move
+            const jumpThreshold = 0.12;  
+            const crouchThreshold = 0.15; 
             
             if (nose.y < gameState.baseY - jumpThreshold) {
                 gameState.isJumping = true;
@@ -111,21 +107,28 @@ function onResults(results) {
                 UI_ACTION.innerText = "";
             }
 
-            // --- 3. LOCOMOTION (Nose Bobbing) ---
+            // --- 3. LOCOMOTION & MOMENTUM ---
             if (gameState.lastNoseY === 0) gameState.lastNoseY = nose.y;
             const deltaY = nose.y - gameState.lastNoseY;
             
             let currentDirection = gameState.movementDirection;
-            const bounceThreshold = 0.006; // Adjusted for nose tracking
+            const bounceThreshold = 0.006; 
 
             if (deltaY > bounceThreshold) currentDirection = 'down'; 
             else if (deltaY < -bounceThreshold) currentDirection = 'up';
 
-            // Detect Step (Only if not actively jumping/crouching)
+            // Normal Step Detection
             if (currentDirection === 'up' && gameState.movementDirection === 'down' && !gameState.isJumping && !gameState.isCrouching) {
                 if (currentTime - gameState.lastStepTime > 250) {
                     gameState.lastStepTime = currentTime;
                 }
+            }
+
+            // THE FIX: ACTION MOMENTUM
+            // If the player is actively jumping or crouching, we refresh the step timer.
+            // This ensures they keep running through the action and have an 800ms grace period upon landing.
+            if (gameState.isJumping || gameState.isCrouching) {
+                gameState.lastStepTime = currentTime;
             }
 
             gameState.movementDirection = currentDirection;
@@ -141,7 +144,7 @@ function onResults(results) {
     } else {
         gameState.playerVisible = false;
         gameState.isRunning = false;
-        gameState.calibrationTime = 0; // Reset calibration if they leave frame
+        gameState.calibrationTime = 0; 
         canvasCtx.fillStyle = 'rgba(255, 0, 0, 0.3)';
         canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
     }
@@ -206,7 +209,7 @@ function animate() {
         UI_STATUS.style.color = "#ff3333";
     }
 
-    // 2. Only move game if PLAYING
+    // 2. Execute 3D Movement
     if (gameState.phase === 'PLAYING') {
         if (gameState.isRunning) {
             gridHelper.position.z += 0.2; 
@@ -223,6 +226,7 @@ function animate() {
             playerMesh.position.y = 0.4; 
         } else {
             playerMesh.scale.y = 1;
+            // Only bob the mesh if they are running and not jumping/crouching
             const targetY = gameState.isRunning ? 1 + Math.abs(Math.sin(Date.now() / 150)) * 0.5 : 1;
             playerMesh.position.y += (targetY - playerMesh.position.y) * 0.2;
         }
